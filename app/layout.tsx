@@ -1,10 +1,10 @@
-export const metadata = { title: "RERS — Réseau d’échanges", description: "Offres & Demandes" };
+export const metadata = { title: 'RERS' };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }) {
   return (
     <html lang="fr">
-      <body style={{ fontFamily: "Inter, system-ui, sans-serif", margin: 0, background: "#f7f7f7" }}>
-        <div style={{ maxWidth: 980, margin: "0 auto", padding: 24 }}>{children}</div>
+      <body style={{ fontFamily: 'system-ui, sans-serif', margin: 0, background: '#f7f7f7' }}>
+        {children}
       </body>
     </html>
   );
