@@ -1,217 +1,112 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-type Entree = {
-  id: string;
-  nom: string;
-  telephone: string;
-  type: "Offre" | "Demande";
-  competences: string;
-  createdAt: string;
-};
+const empty = () => ({
+  nom: "",
+  prenom: "",
+  telephone: "",
+  type: "offre",
+  competences: ""
+});
 
-export default function Page() {
-  const [data, setData] = useState<Entree[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState("");
-  const [isEdit, setIsEdit] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
+export default function Home() {
+  const [items, setItems] = useState([]);
+  const [form, setForm] = useState(empty());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // Form
-  const [nom, setNom] = useState("");
-  const [tel, setTel] = useState("");
-  const [type, setType] = useState<"Offre" | "Demande">("Offre");
-  const [comp, setComp] = useState("");
-
-  useEffect(() => {
-    reload();
-    const saved = localStorage.getItem("rers_admin_token");
-    if (saved) {
-      setToken(saved);
-      setIsEdit(true);
-    }
-  }, []);
-
-  async function reload() {
-    setLoading(true);
-    const res = await fetch("/api/list", { cache: "no-store" });
-    const json = await res.json();
-    setData(json.entries || []);
-    setLoading(false);
+  async function load() {
+    const r = await fetch("/api/entries", { cache: "no-store" });
+    const data = await r.json();
+    setItems(data);
   }
 
-  function askPassword() {
-    const p = prompt("Mot de passe admin :");
-    if (!p) return;
-    localStorage.setItem("rers_admin_token", p);
-    setToken(p);
-    setIsEdit(true);
-  }
-  function stopEdit() {
-    localStorage.removeItem("rers_admin_token");
-    setToken(null);
-    setIsEdit(false);
-  }
+  useEffect(() => { load(); }, []);
 
-  async function addEntry(e: React.FormEvent) {
+  async function add(e) {
     e.preventDefault();
-    if (!token) return alert("Active d’abord le mode Édition.");
-    if (!nom.trim() || !tel.trim() || !comp.trim()) return alert("Remplis tous les champs.");
-    const res = await fetch("/api/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-token": token },
-      body: JSON.stringify({ nom, telephone: tel, type, competences: comp })
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      alert("Erreur ajout: " + t);
-      return;
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setForm(empty());
+      await load();
+    } catch (err) {
+      setError("Erreur ajout : " + (err?.message || "Inconnue"));
+    } finally {
+      setLoading(false);
     }
-    setNom(""); setTel(""); setComp("");
-    await reload();
   }
 
-  async function delEntry(id: string) {
-    if (!token) return alert("Active d’abord le mode Édition.");
+  async function remove(id) {
     if (!confirm("Supprimer cette entrée ?")) return;
-    const res = await fetch("/api/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-token": token },
-      body: JSON.stringify({ id })
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      alert("Erreur suppression: " + t);
-      return;
-    }
-    await reload();
+    const res = await fetch("/api/entries?id=" + id, { method: "DELETE" });
+    if (res.ok) load();
+    else alert("Suppression impossible");
   }
-
-  const filtered = useMemo(() => {
-    const s = q.toLowerCase();
-    if (!s) return data;
-    return data.filter((e) =>
-      [e.nom, e.telephone, e.type, e.competences].join(" ").toLowerCase().includes(s)
-    );
-  }, [q, data]);
 
   return (
-    <main>
-      <h1 style={{ marginBottom: 8 }}>RERS — Offres & Demandes</h1>
-      <p style={{ color: "#555", marginTop: 0 }}>
-        Filtre rapide, ajout/suppression en mode Édition (protégé par mot de passe).
-      </p>
+    <main style={{ maxWidth: 900, margin: "40px auto", padding: "0 16px" }}>
+      <h1>Réseau d’Échanges Réciproques de Savoirs</h1>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "12px 0 20px" }}>
-        <input
-          placeholder="Filtrer (nom, téléphone, type, compétence)"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
-        />
-        {!isEdit ? (
-          <button onClick={askPassword} style={btn()}>
-            Activer l’édition
-          </button>
-        ) : (
-          <button onClick={stopEdit} style={btn("ghost")}>
-            Quitter l’édition
-          </button>
-        )}
-      </div>
+      <form onSubmit={add}
+        style={{
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: "repeat(6, 1fr)",
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 1px 4px rgba(0,0,0,.08)"
+        }}>
+        <input required placeholder="Nom" value={form.nom}
+          onChange={e => setForm({ ...form, nom: e.target.value })} style={{ gridColumn: "span 2" }} />
+        <input required placeholder="Prénom" value={form.prenom}
+          onChange={e => setForm({ ...form, prenom: e.target.value })} style={{ gridColumn: "span 2" }} />
+        <input required placeholder="Téléphone" value={form.telephone}
+          onChange={e => setForm({ ...form, telephone: e.target.value })} style={{ gridColumn: "span 2" }} />
+        <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+          <option value="offre">Offre</option>
+          <option value="demande">Demande</option>
+        </select>
+        <input required placeholder="Compétences / sujet" value={form.competences}
+          onChange={e => setForm({ ...form, competences: e.target.value })} style={{ gridColumn: "span 5" }} />
+        <button disabled={loading} style={{ gridColumn: "span 6", padding: 10 }}>
+          {loading ? "Envoi…" : "Ajouter"}
+        </button>
+        {error && <p style={{ color: "crimson", gridColumn: "span 6" }}>{error}</p>}
+      </form>
 
-      {isEdit && (
-        <form onSubmit={addEntry} style={card()}>
-          <h3 style={{ marginTop: 0 }}>Ajouter une entrée</h3>
-          <div style={grid()}>
-            <div>
-              <label>Nom / Prénom</label>
-              <input value={nom} onChange={(e) => setNom(e.target.value)} style={input()} />
-            </div>
-            <div>
-              <label>Téléphone</label>
-              <input value={tel} onChange={(e) => setTel(e.target.value)} style={input()} />
-            </div>
-            <div>
-              <label>Type</label>
-              <select value={type} onChange={(e) => setType(e.target.value as any)} style={input()}>
-                <option>Offre</option>
-                <option>Demande</option>
-              </select>
-            </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label>Compétences</label>
-              <input value={comp} onChange={(e) => setComp(e.target.value)} style={input()} />
-            </div>
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <button type="submit" style={btn("primary")}>Ajouter</button>
-          </div>
-        </form>
-      )}
-
-      <div style={card()}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <strong>{filtered.length} entrée(s)</strong>
-          {loading && <span>Chargement…</span>}
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={th()}>Nom / Prénom</th>
-                <th style={th()}>Téléphone</th>
-                <th style={th()}>Type</th>
-                <th style={th()}>Compétences</th>
-                {isEdit && <th style={th()}>Action</th>}
+      <div style={{ marginTop: 24, background: "#fff", borderRadius: 12, padding: 12, boxShadow: "0 1px 4px rgba(0,0,0,.08)" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th>Nom</th><th>Prénom</th><th>Téléphone</th><th>Type</th><th>Compétences</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(it => (
+              <tr key={it.id} style={{ borderTop: "1px solid #eee" }}>
+                <td>{it.nom}</td>
+                <td>{it.prenom}</td>
+                <td><a href={`tel:${it.telephone}`}>{it.telephone}</a></td>
+                <td>{it.type}</td>
+                <td>{it.competences}</td>
+                <td><button onClick={() => remove(it.id)}>Supprimer</button></td>
               </tr>
-            </thead>
-            <tbody>
-              {filtered.map((e) => (
-                <tr key={e.id} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={td()}>{e.nom}</td>
-                  <td style={td()}>{e.telephone}</td>
-                  <td style={td()}>{e.type}</td>
-                  <td style={td()}>{e.competences}</td>
-                  {isEdit && (
-                    <td style={td()}>
-                      <button onClick={() => delEntry(e.id)} style={btn("danger", 6)}>Supprimer</button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-              {!filtered.length && !loading && (
-                <tr><td colSpan={isEdit ? 5 : 4} style={{ padding: 16, textAlign: "center", color: "#666" }}>Aucune entrée.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {items.length === 0 && (
+              <tr><td colSpan={6} style={{ textAlign: "center", padding: 16 }}>Aucune entrée pour le moment.</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </main>
   );
-}
-
-function card(): React.CSSProperties {
-  return { background: "#fff", border: "1px solid #eee", borderRadius: 12, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,0.03)", marginBottom: 16 };
-}
-function grid(): React.CSSProperties {
-  return { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, alignItems: "end" };
-}
-function input(): React.CSSProperties {
-  return { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #ddd" };
-}
-function th(): React.CSSProperties {
-  return { textAlign: "left", padding: "10px 8px", fontWeight: 600, fontSize: 14, color: "#333" };
-}
-function td(): React.CSSProperties {
-  return { padding: "10px 8px", fontSize: 14, verticalAlign: "top" };
-}
-function btn(kind: "primary" | "danger" | "ghost" | undefined = undefined, radius = 8): React.CSSProperties {
-  const base: React.CSSProperties = { padding: "10px 14px", borderRadius: radius, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };
-  if (kind === "primary") return { ...base, background: "#111", color: "#fff", borderColor: "#111" };
-  if (kind === "danger") return { ...base, background: "#fff3f3", borderColor: "#f3d1d1" };
-  if (kind === "ghost") return { ...base, background: "#f6f6f6" };
-  return base;
 }
