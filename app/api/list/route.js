@@ -1,20 +1,21 @@
 import { list } from "@vercel/blob";
 
 export const runtime = "edge";
-
 const KEY = "rers/data.json";
 
-async function readAll() {
-  const { blobs } = await list({ prefix: KEY });
-  if (!blobs.length) return [];
-  const url = blobs[0].url;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) return [];
-  const json = await res.json().catch(() => []);
-  return Array.isArray(json) ? json : (json.entries ?? []);
+async function readJSON() {
+  const files = await list({ prefix: KEY });
+  const file = files.blobs.find((b) => b.pathname === KEY);
+  if (!file) return [];
+  const res = await fetch(file.url, { cache: "no-store" });
+  return await res.json();
 }
 
 export async function GET() {
-  const entries = await readAll();
-  return new Response(JSON.stringify({ entries }), { headers: { "content-type": "application/json" } });
+  try {
+    const data = await readJSON();
+    return Response.json({ ok: true, data });
+  } catch (e) {
+    return new Response("error list: " + String(e), { status: 500 });
+  }
 }
