@@ -1,5 +1,6 @@
-/** @type {import('next').NextConfig} */
+// next.config.mjs (ESM)
 const nextConfig = {
-  reactStrictMode: true
+  reactStrictMode: true,
+  // laisse vide si tu n'as rien de spécial
 };
-module.exports = nextConfig;
+export default nextConfig;
