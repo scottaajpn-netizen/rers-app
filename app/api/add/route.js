@@ -3,48 +3,57 @@ import { list, put } from "@vercel/blob";
 export const runtime = "edge";
 const KEY = "rers/data.json";
 
-function checkAuth(req: Request) {
+function checkAuth(req) {
   const token = req.headers.get("x-admin-token") || "";
   const expected = process.env.ADMIN_PASSWORD || "";
   return token && expected && token === expected;
 }
 
-async function readAll() {
-  const { blobs } = await list({ prefix: KEY });
-  if (!blobs.length) return [];
-  const url = blobs[0].url;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) return [];
-  const json = await res.json().catch(() => []);
-  return Array.isArray(json) ? json : (json.entries ?? []);
+async function readJSON() {
+  const files = await list({ prefix: KEY });
+  const file = files.blobs.find((b) => b.pathname === KEY);
+  if (!file) return [];
+  const res = await fetch(file.url, { cache: "no-store" });
+  return await res.json();
 }
 
-export async function POST(req: Request) {
-  if (!checkAuth(req)) return new Response("Unauthorized", { status: 401 });
+export async function POST(req) {
+  try {
+    if (!checkAuth(req)) return new Response("Unauthorized", { status: 401 });
 
-  const body = await req.json();
-  const nom = (body.nom || "").trim();
-  const telephone = (body.telephone || "").trim();
-  const type = body.type === "Demande" ? "Demande" : "Offre";
-  const competences = (body.competences || "").trim();
+    const body = await req.json();
+    const required = ["nom", "prenom", "telephone", "type", "competences"];
+    for (const k of required) {
+      if (typeof body[k] !== "string" || !body[k].trim()) {
+        return new Response("Missing field: " + k, { status: 400 });
+      }
+    }
 
-  if (!nom || !telephone || !competences) return new Response("Champs manquants", { status: 400 });
+    const item = {
+      id: crypto.randomUUID(),
+      nom: body.nom.trim(),
+      prenom: body.prenom.trim(),
+      telephone: body.telephone.trim(),
+      type: body.type.trim(),          // "offre" | "demande"
+      competences: body.competences.trim(),
+      createdAt: Date.now()
+    };
 
-  const entries = await readAll();
-  const entry = {
-    id: crypto.randomUUID(),
-    nom,
-    telephone,
-    type,
-    competences,
-    createdAt: new Date().toISOString()
-  };
-  entries.unshift(entry);
+    const data = await readJSON();
+    data.push(item);
 
-  await put(KEY, JSON.stringify(entries), {
-    contentType: "application/json",
-    access: "public", // public pour lecture facile via URL interne
-  });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
 
-  return new Response(JSON.stringify({ ok: true, entry }), { headers: { "content-type": "application/json" } });
+    const res = await put(KEY, blob, {
+      access: "public",
+      addRandomSuffix: false,
+      contentType: "application/json",
+    });
+
+    return Response.json({ ok: true, url: res.url, item });
+  } catch (e) {
+    return new Response("error add: " + String(e), { status: 500 });
+  }
 }
