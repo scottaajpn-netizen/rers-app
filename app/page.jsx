@@ -1,375 +1,306 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 
-const ADMIN_TOKEN = "87800";
+const LS_KEY = "rers_fiches_v1";
 
-const styles = {
-  wrap: { maxWidth: 1100, margin: "24px auto", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #eee",
-    borderRadius: 12,
-    padding: 16,
-    boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-    marginBottom: 16,
-  },
-  h2: { fontSize: 20, margin: "0 0 12px" },
-  row: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid #ddd",
-    outline: "none",
-  },
-  select: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid #ddd",
-    outline: "none",
-    background: "#fff",
-  },
-  btn: {
-    padding: "10px 14px",
-    borderRadius: 8,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-  },
-  btnGhost: {
-    padding: "10px 14px",
-    borderRadius: 8,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "separate",
-    borderSpacing: 0,
-    overflow: "hidden",
-    borderRadius: 10,
-    border: "1px solid #eee",
-  },
-  th: {
-    textAlign: "left",
-    padding: "10px 12px",
-    background: "#fafafa",
-    borderBottom: "1px solid #eee",
-    fontWeight: 600,
-  },
-  td: { padding: "10px 12px", borderBottom: "1px solid #f2f2f2", verticalAlign: "top" },
-  chip: {
-    display: "inline-block",
-    padding: "2px 8px",
-    borderRadius: 999,
-    fontSize: 12,
-    border: "1px solid transparent",
-  },
-};
-
-function tone(type) {
-  if (type === "offre") return { bg: "#eaffea", bd: "#94d19a" }; // vert
-  if (type === "demande") return { bg: "#eaf2ff", bd: "#a7bff5" }; // bleu
-  return { bg: "#f6f6f6", bd: "#e0e0e0" };
+function loadFiches() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function saveFiches(fiches) {
+  localStorage.setItem(LS_KEY, JSON.stringify(fiches));
 }
 
-// ——— util: normalisation + similarité Jaccard simple
-const STOP = new Set(["de","la","le","les","des","du","et","en","à","au","aux","d","l","un","une","pour","avec","sur","dans","par","ou"]);
-function tokenize(s) {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter(w => w && !STOP.has(w));
-}
-function jaccard(a, b) {
-  const A = new Set(tokenize(a));
-  const B = new Set(tokenize(b));
-  if (!A.size && !B.size) return 0;
-  let inter = 0;
-  for (const w of A) if (B.has(w)) inter++;
-  const union = A.size + B.size - inter;
-  return inter / union;
-}
-
-export default function Page() {
-  const [entries, setEntries] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-
-  // form
+export default function Home() {
+  const [fiches, setFiches] = useState([]);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
-  const [type, setType] = useState("offre");
-  const [skills, setSkills] = useState("");
+  const [lines, setLines] = useState([]); // {type:'offer'|'request', text:''}
 
-  async function loadEntries() {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/entries", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
-      setEntries(Array.isArray(data.entries) ? data.entries : []);
-    } catch (e) {
-      setError("Erreur chargement : " + (e?.message || "inconnue"));
-    } finally {
-      setLoading(false);
-    }
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState(null); // {id, firstName,lastName,phone,offers,requests}
+
+  // charge
+  useEffect(() => {
+    setFiches(loadFiches());
+  }, []);
+
+  // derive
+  const count = fiches.length;
+
+  // helpers
+  function addLine(type) {
+    setLines((prev) => [...prev, { type, text: "" }]);
+  }
+  function updateLine(i, text) {
+    setLines((prev) => {
+      const next = [...prev];
+      next[i] = { ...next[i], text };
+      return next;
+    });
+  }
+  function removeLine(i) {
+    setLines((prev) => prev.filter((_, idx) => idx !== i));
   }
 
-  useEffect(() => { loadEntries(); }, []);
-
-  async function handleAdd(e) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const payload = { firstName, lastName, phone, type, skills };
-      const res = await fetch("/api/entries", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": ADMIN_TOKEN
-        },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
-
-      // Optimiste : on met à jour localement sans attendre un rechargement lourd
-      setEntries(prev => [data.entry, ...prev]);
-
-      // reset form
-      setFirstName(""); setLastName(""); setPhone(""); setType("offre"); setSkills("");
-    } catch (e) {
-      setError("Erreur ajout : " + (e?.message || "inconnue"));
-    } finally {
-      setBusy(false);
-    }
+  function resetForm() {
+    setFirstName("");
+    setLastName("");
+    setPhone("");
+    setLines([]);
   }
 
-  async function handleDelete(id) {
-    if (!id) return;
-    if (!confirm("Supprimer cette entrée ?")) return;
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/entries?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: { "x-admin-token": ADMIN_TOKEN }
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
-      // Optimiste
-      setEntries(prev => prev.filter(e => e.id !== id));
-    } catch (e) {
-      setError("Erreur suppression : " + (e?.message || "inconnue"));
-    } finally {
-      setBusy(false);
-    }
+  function handleCreate() {
+    const offers = lines.filter(l => l.type === "offer" && l.text.trim()).map(l => l.text.trim());
+    const requests = lines.filter(l => l.type === "request" && l.text.trim()).map(l => l.text.trim());
+    if (!firstName.trim() && !lastName.trim()) return alert("Prénom ou nom requis.");
+    const id = crypto.randomUUID();
+    const fiche = { id, firstName:firstName.trim(), lastName:lastName.trim(), phone:phone.trim(), offers, requests, createdAt: Date.now() };
+    const next = [fiche, ...fiches];
+    setFiches(next);
+    saveFiches(next);
+    resetForm();
   }
 
-  function fmtPhone(p) {
-    const s = String(p || "").replace(/\D/g, "");
-    return s.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
+  function handleDelete(id) {
+    if (!confirm("Supprimer cette fiche ?")) return;
+    const next = fiches.filter(f => f.id !== id);
+    setFiches(next);
+    saveFiches(next);
+    if (editingId === id) { setEditingId(null); setEditData(null); }
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter(e =>
-      (e.firstName + " " + e.lastName).toLowerCase().includes(q) ||
-      e.skills.toLowerCase().includes(q) ||
-      e.phone.replace(/\D/g, "").includes(q.replace(/\D/g, ""))
-    );
-  }, [entries, query]);
+  // --- Edition ---
+  function startEdit(f) {
+    setEditingId(f.id);
+    setEditData({
+      ...f,
+      offers: f.offers ?? [],
+      requests: f.requests ?? []
+    });
+  }
+  function updateEdit(field, value) {
+    setEditData((prev) => ({ ...prev, [field]: value }));
+  }
+  function addEditItem(kind) {
+    setEditData(prev => ({ ...prev, [kind]: [...(prev[kind] || []), ""] }));
+  }
+  function updateEditItem(kind, idx, val) {
+    setEditData(prev => {
+      const arr = [...(prev[kind] || [])];
+      arr[idx] = val;
+      return { ...prev, [kind]: arr };
+    });
+  }
+  function removeEditItem(kind, idx) {
+    setEditData(prev => {
+      const arr = [...(prev[kind] || [])];
+      arr.splice(idx, 1);
+      return { ...prev, [kind]: arr };
+    });
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditData(null);
+  }
+  function saveEdit() {
+    if (!editData) return;
+    const cleaned = {
+      ...editData,
+      firstName: (editData.firstName || "").trim(),
+      lastName: (editData.lastName || "").trim(),
+      phone: (editData.phone || "").trim(),
+      offers: (editData.offers || []).map(s => s.trim()).filter(Boolean),
+      requests: (editData.requests || []).map(s => s.trim()).filter(Boolean),
+      updatedAt: Date.now(),
+    };
+    const idx = fiches.findIndex(f => f.id === editingId);
+    if (idx === -1) return;
+    const next = [...fiches];
+    next[idx] = { ...next[idx], ...cleaned };
+    setFiches(next);
+    saveFiches(next);
+    cancelEdit();
+  }
 
-  // Correspondances offre↔demande (seuil ajustable)
-  const matches = useMemo(() => {
-    const offres = filtered.filter(e => e.type === "offre");
-    const demandes = filtered.filter(e => e.type === "demande");
-    const pairs = [];
-    const THRESH = 0.35; // ajuste si besoin
-    for (const d of demandes) {
-      const scored = offres
-        .map(o => ({ o, score: jaccard(d.skills, o.skills) }))
-        .filter(x => x.score >= THRESH)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
-      if (scored.length) {
-        pairs.push({ demande: d, offres: scored });
+  // export / import / reload
+  function exportJSON() {
+    const blob = new Blob([JSON.stringify(fiches, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rers_fiches_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function reloadFromStorage() {
+    setFiches(loadFiches());
+  }
+  function handleImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!Array.isArray(parsed)) throw new Error("format inattendu");
+        saveFiches(parsed);
+        setFiches(parsed);
+        alert("Import réussi ✅");
+      } catch (err) {
+        alert("Import invalide : " + err.message);
       }
-    }
-    return pairs;
-  }, [filtered]);
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // reset input
+  }
 
   return (
-    <div style={styles.wrap}>
-      <div style={{ ...styles.card, borderColor: "#dcdcdc" }}>
-        <h1 style={{ margin: 0, fontSize: 26 }}>RERS – Réseau d’échanges réciproques de savoir</h1>
-        <p style={{ margin: "6px 0 0", color: "#666" }}>
-          Ajoutez des <b>offres</b> et des <b>demandes</b>, supprimez, recherchez, et voyez les correspondances.
-        </p>
+    <main style={{ maxWidth: 960, margin: "24px auto", padding: 16 }}>
+      <h1>RERS</h1>
+      <p>Annuaire — échanges de savoirs</p>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "8px 0 24px" }}>
+        <button onClick={reloadFromStorage}>Recharger</button>
+        <button onClick={exportJSON}>Exporter</button>
+        <label style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+          <span>Importer</span>
+          <input type="file" accept="application/json" onChange={handleImport} />
+        </label>
+        <span style={{ marginLeft: "auto" }}>{count} fiche{count>1?"s":""}</span>
       </div>
 
-      {/* Formulaire */}
-      <form onSubmit={handleAdd} style={styles.card}>
-        <h2 style={styles.h2}>Ajouter une entrée</h2>
-        <div style={styles.row}>
+      <section style={{ borderTop: "1px solid #ddd", paddingTop: 12, marginTop: 12 }}>
+        <h2>Ajouter une fiche</h2>
+        <p>Nom + une ou plusieurs lignes Offre/Demande.</p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
             <label>Prénom</label>
-            <input style={styles.input} value={firstName} onChange={e => setFirstName(e.target.value)} required />
+            <input value={firstName} onChange={e=>setFirstName(e.target.value)} style={{ width:"100%" }} />
           </div>
           <div>
             <label>Nom</label>
-            <input style={styles.input} value={lastName} onChange={e => setLastName(e.target.value)} required />
+            <input value={lastName} onChange={e=>setLastName(e.target.value)} style={{ width:"100%" }} />
           </div>
-        </div>
-        <div style={{ ...styles.row, marginTop: 12 }}>
-          <div>
+          <div style={{ gridColumn: "1 / span 2" }}>
             <label>Téléphone</label>
-            <input style={styles.input} value={phone} onChange={e => setPhone(e.target.value)} required />
-          </div>
-          <div>
-            <label>Type</label>
-            <select style={styles.select} value={type} onChange={e => setType(e.target.value)}>
-              <option value="offre">Offre</option>
-              <option value="demande">Demande</option>
-            </select>
+            <input value={phone} onChange={e=>setPhone(e.target.value)} style={{ width:"100%" }} />
           </div>
         </div>
+
+        <h3 style={{ marginTop: 12 }}>Offres / Demandes</h3>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button type="button" onClick={() => addLine("offer")}>+ Ajouter une offre</button>
+          <button type="button" onClick={() => addLine("request")}>+ Ajouter une demande</button>
+        </div>
+
+        {lines.map((l, i) => (
+          <div key={i} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:6 }}>
+            <span style={{ minWidth: 90, fontSize: 12, opacity: .7 }}>{l.type === "offer" ? "Offre" : "Demande"}</span>
+            <input
+              value={l.text}
+              onChange={(e)=>updateLine(i, e.target.value)}
+              style={{ flex: 1 }}
+              placeholder={l.type === "offer" ? "ex: Cours couture débutant" : "ex: Aide CV" }
+            />
+            <button type="button" onClick={() => removeLine(i)}>Supprimer</button>
+          </div>
+        ))}
+
         <div style={{ marginTop: 12 }}>
-          <label>Compétences (mots clés)</label>
-          <input
-            style={styles.input}
-            placeholder="ex: cuisine italienne, aide aux devoirs, Excel, jardinage..."
-            value={skills}
-            onChange={e => setSkills(e.target.value)}
-            required
-          />
+          <button onClick={handleCreate}>Enregistrer</button>
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button type="submit" disabled={busy} style={styles.btn}>{busy ? "En cours..." : "Ajouter"}</button>
-          <button type="button" onClick={loadEntries} disabled={loading} style={styles.btnGhost}>
-            {loading ? "Rechargement..." : "Recharger"}
-          </button>
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Rechercher..."
-            style={{ ...styles.input, maxWidth: 260 }}
-          />
-        </div>
-        {error ? <div style={{ marginTop: 8, color: "#b00020" }}>{error}</div> : null}
-      </form>
+      </section>
 
-      {/* Correspondances */}
-      <div style={styles.card}>
-        <h2 style={styles.h2}>Correspondances (offre ↔ demande)</h2>
-        {!matches.length ? (
-          <div style={{ color: "#666" }}>Aucune correspondance trouvée pour l’instant.</div>
+      <section style={{ marginTop: 24 }}>
+        <h2>Liste des fiches</h2>
+        {fiches.length === 0 ? (
+          <p>Aucun résultat.</p>
         ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {matches.map((m, idx) => {
-              const tD = tone("demande");
-              return (
-                <div key={idx} style={{ border: "1px solid #f1e3a0", background: "#fff9d6", borderRadius: 10, padding: 12 }}>
-                  <div style={{ marginBottom: 8, fontWeight: 600 }}>Demande</div>
-                  <div style={{ background: tD.bg, border: `1px solid ${tD.bd}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                    <div><b>{m.demande.firstName} {m.demande.lastName}</b> • {fmtPhone(m.demande.phone)}</div>
-                    <div style={{ color: "#444" }}>{m.demande.skills}</div>
-                  </div>
-                  <div style={{ marginBottom: 6, fontWeight: 600 }}>Offres compatibles</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {m.offres.map(({ o, score }) => {
-                      const tO = tone("offre");
-                      return (
-                        <div key={o.id} style={{ background: tO.bg, border: `1px solid ${tO.bd}`, borderRadius: 8, padding: 10 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                            <div><b>{o.firstName} {o.lastName}</b> • {fmtPhone(o.phone)}</div>
-                            <span style={{ ...styles.chip, background: "#fff", borderColor: "#eccb4e" }}>
-                              Similarité {(score * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          <div style={{ color: "#444", marginTop: 4 }}>{o.skills}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-          L’algorithme compare les mots clés (Jaccard). Ajuste ta recherche ou le seuil dans le code si besoin.
-        </div>
-      </div>
-
-      {/* Tableau des entrées */}
-      <div style={styles.card}>
-        <h2 style={styles.h2}>Toutes les entrées ({filtered.length})</h2>
-        {loading ? (
-          <div>Chargement…</div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Type</th>
-                  <th style={styles.th}>Nom</th>
-                  <th style={styles.th}>Téléphone</th>
-                  <th style={styles.th}>Compétences</th>
-                  <th style={styles.th}>Créé</th>
-                  <th style={styles.th}>Actions</th>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign:"left", borderBottom:"1px solid #eee", padding:"6px 0" }}>Nom</th>
+                <th style={{ textAlign:"left", borderBottom:"1px solid #eee", padding:"6px 0" }}>Téléphone</th>
+                <th style={{ textAlign:"left", borderBottom:"1px solid #eee", padding:"6px 0" }}>Offres</th>
+                <th style={{ textAlign:"left", borderBottom:"1px solid #eee", padding:"6px 0" }}>Demandes</th>
+                <th style={{ borderBottom:"1px solid #eee" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {fiches.map((f) => (
+                <tr key={f.id}>
+                  <td style={{ padding:"8px 0" }}>{f.firstName} {f.lastName}</td>
+                  <td style={{ padding:"8px 0" }}>{f.phone}</td>
+                  <td style={{ padding:"8px 0" }}>{(f.offers||[]).join(", ")}</td>
+                  <td style={{ padding:"8px 0" }}>{(f.requests||[]).join(", ")}</td>
+                  <td style={{ padding:"8px 0", whiteSpace:"nowrap" }}>
+                    <button onClick={() => startEdit(f)}>Éditer</button>{" "}
+                    <button onClick={() => handleDelete(f.id)}>Supprimer</button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map(e => {
-                  const t = tone(e.type);
-                  return (
-                    <tr key={e.id} style={{ background: e.type === "offre" ? t.bg : e.type === "demande" ? t.bg : "transparent" }}>
-                      <td style={styles.td}>
-                        <span style={{ ...styles.chip, background: "#fff", borderColor: t.bd }}>{e.type}</span>
-                      </td>
-                      <td style={styles.td}><b>{e.firstName} {e.lastName}</b></td>
-                      <td style={styles.td}>{fmtPhone(e.phone)}</td>
-                      <td style={styles.td}>{e.skills}</td>
-                      <td style={styles.td}>{new Date(e.createdAt).toLocaleString("fr-FR")}</td>
-                      <td style={styles.td}>
-                        <button
-                          onClick={() => handleDelete(e.id)}
-                          style={{ ...styles.btnGhost, borderColor: "#e33", color: "#e33" }}
-                          title="Supprimer"
-                          disabled={busy}
-                        >
-                          Supprimer
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!filtered.length && (
-                  <tr><td style={styles.td} colSpan={6}>&nbsp;Aucune donnée.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         )}
-        <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-          <span style={{ ...styles.chip, background: tone("offre").bg, borderColor: tone("offre").bd }}>Offre</span>{" "}
-          <span style={{ ...styles.chip, background: tone("demande").bg, borderColor: tone("demande").bd }}>Demande</span>{" "}
-          <span style={{ ...styles.chip, background: "#fff9d6", borderColor: "#f1e3a0" }}>Correspondance</span>
-        </div>
-      </div>
-    </div>
+        <p style={{ marginTop: 8, fontSize: 12, opacity: .7 }}>
+          Pense à exporter régulièrement (sauvegarde locale).
+        </p>
+      </section>
+
+      {/* ÉDITEUR : panneau simple en dessous (sans modal) */}
+      {editingId && editData && (
+        <section style={{ marginTop: 32, borderTop:"1px solid #ddd", paddingTop: 16 }}>
+          <h2>Modifier la fiche</h2>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap: 12 }}>
+            <div>
+              <label>Prénom</label>
+              <input value={editData.firstName} onChange={e=>updateEdit("firstName", e.target.value)} style={{ width:"100%" }} />
+            </div>
+            <div>
+              <label>Nom</label>
+              <input value={editData.lastName} onChange={e=>updateEdit("lastName", e.target.value)} style={{ width:"100%" }} />
+            </div>
+            <div style={{ gridColumn:"1 / span 2" }}>
+              <label>Téléphone</label>
+              <input value={editData.phone} onChange={e=>updateEdit("phone", e.target.value)} style={{ width:"100%" }} />
+            </div>
+          </div>
+
+          <h3 style={{ marginTop: 12 }}>Offres</h3>
+          <button type="button" onClick={()=>addEditItem("offers")}>+ Ajouter une offre</button>
+          <ul style={{ marginTop: 8 }}>
+            {(editData.offers||[]).map((t, i) => (
+              <li key={i} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:6 }}>
+                <input value={t} onChange={e=>updateEditItem("offers", i, e.target.value)} style={{ flex:1 }} />
+                <button type="button" onClick={()=>removeEditItem("offers", i)}>Supprimer</button>
+              </li>
+            ))}
+          </ul>
+
+          <h3>Demandes</h3>
+          <button type="button" onClick={()=>addEditItem("requests")}>+ Ajouter une demande</button>
+          <ul style={{ marginTop: 8 }}>
+            {(editData.requests||[]).map((t, i) => (
+              <li key={i} style={{ display:"flex", gap:8, alignItems:"center", marginBottom:6 }}>
+                <input value={t} onChange={e=>updateEditItem("requests", i, e.target.value)} style={{ flex:1 }} />
+                <button type="button" onClick={()=>removeEditItem("requests", i)}>Supprimer</button>
+              </li>
+            ))}
+          </ul>
+
+          <div style={{ display:"flex", gap:8, marginTop: 12 }}>
+            <button onClick={saveEdit}>Enregistrer les modifications</button>
+            <button onClick={cancelEdit}>Annuler</button>
+          </div>
+        </section>
+      )}
+    </main>
   );
 }
